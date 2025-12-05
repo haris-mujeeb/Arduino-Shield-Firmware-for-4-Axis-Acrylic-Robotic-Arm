@@ -18,14 +18,39 @@ public:
     // Main setup function (configures timers and sets home position)
     void initialize();
     
-    // Control functions
+    // ---------------------------------------------------------
+    // CONTROL FUNCTIONS
+    // ---------------------------------------------------------
+    
     void enableServos();
     void disableServos();
     bool isEnabled() const { return isPowered; } 
+    
+    /**
+     * @brief Instantly sets servos to the target angles.
+     * WARNING: This moves at maximum speed. Use for small corrections or initialization.
+     */
     void goToPosition(int baseAngle, int shoulderAngle, int elbowAngle, int wristAngle);
-    void homeArm(int stepDelay = 5); // stepDelay is used for the settling time
 
-    // Readback function
+    /**
+     * @brief Moves the arm to the target position using S-Curve Acceleration.
+     * This creates a smooth start and stop, reducing mechanical stress.
+     * * @param targetBase Target angle for Base
+     * @param targetShoulder Target angle for Shoulder
+     * @param targetElbow Target angle for Elbow
+     * @param targetWrist Target angle for Wrist
+     * @param durationMillis Total time the move should take (e.g., 1000 = 1 second)
+     */
+    void moveToPositionSmooth(int targetBase, int targetShoulder, int targetElbow, int targetWrist, int durationMillis);
+
+    // Moves to home position. stepDelay is used for settling time.
+    void homeArm(int stepDelay = 5); 
+
+    // ---------------------------------------------------------
+    // READBACK
+    // ---------------------------------------------------------
+    
+    // Reads the current register value and converts back to degrees
     int getCurrentAngle(int index); // 0=Base, 1=Shoulder, 2=Elbow, 3=Wrist
     
 private:
@@ -39,6 +64,8 @@ private:
 
     // Timer configuration and servo control
     void initServosTimer();
+    
+    // Helper to convert angle to hardware register value
     int angleToTimerValue(int angle, int timer_id);
 };
 

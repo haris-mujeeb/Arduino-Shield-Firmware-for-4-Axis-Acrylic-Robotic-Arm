@@ -11,7 +11,7 @@ const int SHOULDER_PIN  = 10; // Timer1 OC1B
 const int ELBOW_PIN     = 11; // Timer2 OC2A
 const int WRIST_PIN     = 3;  // Timer2 OC2B
 const int ENABLE_PIN    = 2;  // External enable/power pin (e.g., MOSFET switch)
-
+const int ANGLES_OFFSETS[4] = {28, -65, 15, 150}; // Base, Shoulder, Elbow, Wrist
 // Instantiate the arm controller
 ArmController arm(BASE_PIN, SHOULDER_PIN, ELBOW_PIN, WRIST_PIN, ENABLE_PIN);
 
@@ -41,12 +41,28 @@ void parseAndExecutePosition() {
         // Simple conversion from ASCII string to integer (atoi is fast)
         angles[count++] = atoi(token); 
         token = strtok(NULL, " "); // Get the next token
+        
     }
 
     if (count == 4) {
         // Execute the position command directly to the registers
         // This method has no serial logging for maximum speed.
-        arm.goToPosition(angles[0], angles[1], angles[2], angles[3]);
+        arm.moveToPositionSmooth(angles[0] + ANGLES_OFFSETS[0], 
+                                angles[1] + ANGLES_OFFSETS[1], 
+                                angles[2]  + ANGLES_OFFSETS[2], 
+                                angles[3]  + ANGLES_OFFSETS[3],
+                                800);
+
+        Serial.print(angles[0] + ANGLES_OFFSETS[0]);
+        Serial.print(", ");
+        Serial.print(angles[1] + ANGLES_OFFSETS[1]);
+        Serial.print(", ");
+        Serial.print(angles[2] + ANGLES_OFFSETS[2]);
+        Serial.print(", ");
+        Serial.println(angles[3] + ANGLES_OFFSETS[3]);
+
+
+
         // Serial.println("ACK"); // Uncomment for host acknowledgement
     } else {
         Serial.println("ERR: Invalid P command format. Expected \'P<B> <S> <E> <W>\'");
