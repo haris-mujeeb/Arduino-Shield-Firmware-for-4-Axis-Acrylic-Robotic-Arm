@@ -53,13 +53,13 @@ void parseAndExecutePosition() {
                                 angles[3]  + ANGLES_OFFSETS[3],
                                 800);
 
-        Serial.print(angles[0] + ANGLES_OFFSETS[0]);
+        Serial.print(angles[0]);
         Serial.print(", ");
-        Serial.print(angles[1] + ANGLES_OFFSETS[1]);
+        Serial.print(angles[1]);
         Serial.print(", ");
-        Serial.print(angles[2] + ANGLES_OFFSETS[2]);
+        Serial.print(angles[2]);
         Serial.print(", ");
-        Serial.println(angles[3] + ANGLES_OFFSETS[3]);
+        Serial.println(angles[3]);
 
 
 

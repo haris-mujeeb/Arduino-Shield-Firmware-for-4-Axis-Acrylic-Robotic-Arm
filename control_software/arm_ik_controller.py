@@ -2,7 +2,7 @@ import serial
 import time
 import math
 import sys
-# --- NEW: SERIAL PORT DISCOVERY ---
+# --- SERIAL PORT DISCOVERY ---
 try:
     import serial.tools.list_ports
 except ImportError:
@@ -39,7 +39,6 @@ BAUD_RATE = 250000     # Match the rate set in your Arduino code
 # Larger value = slower/jerkier
 COMMAND_DELAY_SEC = 0.05 # Was 0.05, set to 0.03 to match snippet
 
-
 # --- 3. ANGLE/LIMIT UTILITIES ---
 # Default angles for testing (Base, Shoulder, Elbow, Gripper)
 DEFAULT_HOME_ANGLES = [118, 20, 115, 150]
@@ -48,12 +47,11 @@ DEFAULT_HOME_ANGLES = [118, 20, 115, 150]
 # Global variable to store the arm's last known angles
 g_current_angles = list(DEFAULT_HOME_ANGLES) # Will be initialized properly in main
 
-# --- NEW: SPEED CONTROL FOR INTERACTIVE MODE ---
+# --- SPEED CONTROL FOR INTERACTIVE MODE ---
 # Number of steps for smooth interpolation in interactive mode
 # Total move time = INTERPOLATION_STEPS * COMMAND_DELAY_SEC
 # e.g., 50 steps * 0.05 sec = 2.5 seconds per move
-INTERPOLATION_STEPS = 50 
-# --- END NEW ---
+INTERPOLATION_STEPS = 1 
 
 
 def select_serial_port():
@@ -132,67 +130,111 @@ class ArmIK:
         """
         
         # --- J1: Base Angle (Theta 1 - Yaw) ---
-        if x == 0 and y == 0:
-            angle_base = 0.0 # Straight forward
+        R = math.sqrt(x**2 + y**2) # Horizontal reach from the base
+        
+        if R == 0:
+             # Angle should be arbitrary, e.g., 0 (straight ahead)
+            angle_base = 0.0
         else:
             angle_base_rad = math.atan2(y, x)
             angle_base = math.degrees(angle_base_rad)
-        
-        servo_base = int(self.clamp(angle_base + 90.0, 0, 180))
 
-        # --- Project to 2D Plane (R-Z) ---
-        R = math.sqrt(x**2 + y**2) # Horizontal reach from the base
+        # Base servo mapping: The meArm code uses 90 as the centered (0 deg) position.
+        # This maps the -90 to +90 angle_base to 0 to 180 servo range.
+        # A 0 deg target is typically mapped to a 90 deg servo angle.
+        # If your arm's center is 118, you may need to adjust the 90.0 offset.
+        servo_base = int(self.clamp(angle_base, 0, 180))
+
+
+        # --- J2 & J3: Shoulder and Elbow Angles (2-Link IK) ---
         Z_eff = z - self.L0_Z      # Z height relative to the shoulder joint (J2)
 
         D_sq = R**2 + Z_eff**2
         D = math.sqrt(D_sq)
 
-        if D > MAX_REACH or D < abs(self.L1 - self.L2) or (R == 0 and Z_eff == 0):
-            # print(f"IK ERROR: Target ({R:.1f}, {Z_eff:.1f}) out of reach (D={D:.1f}). Max: {MAX_REACH:.1f}")
-            return None
+        if D > MAX_REACH or D < abs(self.L1 - self.L2) or D == 0:
+             # print(f"IK ERROR: Target ({R:.1f}, {Z_eff:.1f}) out of reach (D={D:.1f}). Max: {MAX_REACH:.1f}")
+             return None
 
-        # --- J3: Elbow Angle (Theta 3) - Pitch ---
+        # 1. Elbow Angle (Theta 3) - Law of Cosines
         try:
-            # Clamp to avoid math domain errors from floating point inaccuracies
+             # Use meArm's formula: L2^2 = L1^2 + D^2 - 2*L1*D*cos(alpha_L2_prime)
+             # Then, angle_elbow_rad = pi - acos(cos_alpha_L2)
             cos_alpha_L2_arg = (self.L1**2 + self.L2**2 - D_sq) / (2 * self.L1 * self.L2)
             cos_alpha_L2 = self.clamp(cos_alpha_L2_arg, -1.0, 1.0) 
             alpha_L2_rad = math.acos(cos_alpha_L2)
         except ZeroDivisionError:
-            print("IK ERROR: Division by zero during elbow calculation.")
-            return None
+             return None
 
+        # This gives the angle of the elbow joint itself (internal angle of the triangle)
+        # Note: meArm code uses an inverse mapping to a 0-180 servo range.
+        angle_elbow_deg = math.degrees(alpha_L2_rad)
+
+        # ELBOW SERVO MAPPING: The meArm logic has a specific non-linear mapping 
+        # that converts the internal angle (alpha_L2) to the servo angle.
+        # meArm's Arduino code uses a lookup table; a simple, typical approximation is:
+        # A fully extended arm (180 deg internal angle) is a low servo value (e.g., 0)
+        # A fully bent arm (0 deg internal angle) is a high servo value (e.g., 180)
+        # A simple linear inverse mapping:
+        # servo_elbow = int(self.clamp(180.0 - angle_elbow_deg, 0, 180)) 
+        
+        # We will use the meArm's simplified, offset-based mapping which is essentially:
+        # Elbow Angle (deg) = 180 - alpha_L2_deg
+        # Servo Angle = Elbow Angle (deg) + offset
+        
+        # If meArm uses 0-180 for the internal angle, your original angle_elbow_rad = pi - alpha_L2_rad
+        # was calculating the reflex angle, which is often correct for the servo map.
+        # Let's use the internal angle and apply a mapping.
+        
+        # *** meArm Reference Angle (J3) ***
+        # The meArm firmware (Marmalade) uses: a3 = 180 - alpha_L2 (internal angle)
+        # Servo_J3 = a3 (This assumes a 1:1 mapping with a 0 offset)
+        angle_j3_deg = 180.0 - angle_elbow_deg
+        # Your current servo map uses: servo_elbow = int(self.clamp(angle_elbow_deg, 0, 180))
+        # which means an elbow of 0 deg internal angle (straight) maps to 0 deg servo,
+        # and 180 deg internal angle (folded) maps to 180 deg servo.
+        # The meArm's IK *requires* that a **straighter** arm corresponds to a **higher** elbow angle in the math.
+        # Since `alpha_L2` is the internal angle, `angle_elbow_rad = math.pi - alpha_L2_rad` is the standard angle for the elbow link relative to the shoulder link's position.
+        
         angle_elbow_rad = math.pi - alpha_L2_rad
         angle_elbow_deg = math.degrees(angle_elbow_rad)
+        servo_elbow = int(self.clamp(angle_elbow_deg, 0, 180)) # Keeping the existing servo mapping for now
         
-        # Servo Mapping J3: This is highly specific. 
-        servo_elbow = int(self.clamp(angle_elbow_deg, 0, 180))
-
-
-        # --- J2: Shoulder Angle (Theta 2) - Pitch ---
-        beta_rad = math.atan2(Z_eff, R) 
-        
+  
+        # 2. Shoulder Angle (Theta 2) - Position of the first link
         try:
-            # Clamp to avoid math domain errors
+             # Angle of the target vector (D) relative to the R-axis (horizontal)
+            gamma_rad = math.atan2(Z_eff, R) 
+            
+             # Angle of the first link (L1) relative to the target vector (D)
             cos_alpha_L1_arg = (D_sq + self.L1**2 - self.L2**2) / (2 * D * self.L1)
             cos_alpha_L1 = self.clamp(cos_alpha_L1_arg, -1.0, 1.0) 
             alpha_L1_rad = math.acos(cos_alpha_L1)
         except ZeroDivisionError:
-             print("IK ERROR: Division by zero during shoulder calculation (Target likely at 0,0,L0_Z).")
              return None
 
-        angle_shoulder_rad = beta_rad + alpha_L1_rad
+        # Total angle of the shoulder link relative to the horizontal (R-axis)
+        # This is the joint angle, typically measured from the vertical (Z-axis) for this arm.
+        # The meArm measures shoulder angle from the horizontal: a2 = gamma + alpha_L1
+        angle_shoulder_rad = gamma_rad + alpha_L1_rad
         angle_shoulder_deg = math.degrees(angle_shoulder_rad)
 
-        # Servo Mapping J2: Needs tuning.
-        servo_shoulder = int(self.clamp(angle_shoulder_deg, 0, 180))
+        # SHOULDER SERVO MAPPING: 
+        # meArm's shoulder angle is measured from horizontal (R). 0 is horizontal, 90 is vertical.
+        # Servo mapping is highly dependent on how the servo is installed.
+        # Assuming the servo needs to move from 0 (down) to 180 (up).
+        # meArm's firmware (Marmalade) uses: servo_J2 = 180 - angle_shoulder_deg
+        servo_shoulder = int(self.clamp(180.0 - angle_shoulder_deg, 0, 180))
         
+        # Note on elbow servo: Given the forward kinematics structure, the current `servo_elbow` 
+        # is likely correct *if* the `forward_kinematics` is also correct.
+
         # --- J4: Gripper Control ---
-        servo_gripper = int(self.clamp(grip_angle_deg, 140, 160))
+        # Gripper angle is independent of the IK, just clamped based on your hardware limits.
+        servo_gripper = int(self.clamp(grip_angle_deg, 0, 180)) # Changed to full 0-180 range.
 
         # Assemble results: [Base, Shoulder, Elbow, Gripper]
         angles = [servo_base, servo_shoulder, servo_elbow, servo_gripper]
-        
-        # print(f"\nIK Solved: Base={angles[0]} | Shoulder={angles[1]} | Elbow={angles[2]} | Gripper={angles[3]}")
         
         return angles
 
@@ -205,13 +247,13 @@ class ArmIK:
         
         # Reverse Servo Mappings to get Joint Angles (in radians)
         # J1 (Base)
-        theta1 = math.radians(B_servo - 90.0 - 28.0)
+        theta1 = math.radians(B_servo)
         print("theta1:", math.degrees(theta1))
         # J2 (Shoulder)
-        theta2 = - math.radians(S_servo - 90.0 - 25)
+        theta2 = -math.radians(S_servo - 180) 
         print("theta2:", math.degrees(theta2))
         # J3 (Elbow) - Assuming 180 is straight, 0 is fully bent/folded
-        thetaq = - math.radians(E_servo - 25)
+        thetaq = - math.radians(E_servo)
         theta3 = math.radians(90) - theta2 - thetaq
         print("thetaq:", math.degrees(thetaq))
         print("theta3:", math.degrees(theta3))
@@ -288,7 +330,6 @@ class ArmIK:
         plt.draw()
         plt.pause(0.001)
 
-
 def send_command(ser, angles):
     """Formats and sends the angle command over serial."""
     command_str = f"P{angles[0]} {angles[1]} {angles[2]} {angles[3]}\n"
@@ -299,8 +340,6 @@ def send_command(ser, angles):
     # Use the global delay constant for speed control
     time.sleep(COMMAND_DELAY_SEC) 
 
-
-# --- NEW: Function for rate-controlled movement ---
 def move_to_angles_smoothly(ser, ik_solver, target_angles, num_steps=INTERPOLATION_STEPS):
     """
     Moves the arm from its last known position (g_current_angles) to a new 
@@ -343,10 +382,8 @@ def move_to_angles_smoothly(ser, ik_solver, target_angles, num_steps=INTERPOLATI
     # After the loop, update the global state to the final target position
     g_current_angles[:] = target_angles
     print("Move complete.")
-# --- END NEW ---
 
-
-# --- 4. TEST FUNCTIONS ---
+# --- TEST FUNCTIONS ---
 
 def test_joint_sweep(ik_solver, ser):
     """Tests each motor by sweeping it from 0 to 180 degrees while others stay at home."""
@@ -498,8 +535,6 @@ def interactive_ik_mode(ik_solver, ser):
         else:
             print(f"IK ERROR: Target ({x:.1f}, {y:.1f}, {z:.1f}) is unreachable.")
 
-
-# --- NEW: FUNCTION FOR INTERACTIVE JOINT CONTROL (FK TEST) ---
 def interactive_joint_mode(ik_solver, ser):
     """Allows direct control of each joint angle to test forward kinematics."""
     print("\n--- Running Interactive Joint (Forward Kinematics) Mode ---")
@@ -586,10 +621,7 @@ def interactive_joint_mode(ik_solver, ser):
             
         print(f"Angle set. Calculated FK (X,Y,Z): ({P3[0]:.1f}, {P3[1]:.1f}, {P3[2]:.1f})")
 
-# --- END NEW ---
-
-
-# --- 5. MAIN EXECUTION ---
+# --- MAIN EXECUTION ---
 
 def run_controller():
     """Initializes serial communication and runs the interactive IK loop."""
