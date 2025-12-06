@@ -2,9 +2,7 @@
 
 This project provides a complete hardware and software solution for controlling a 4-DOF (Degrees of Freedom) acrylic robotic arm. It includes a custom Arduino shield, stable firmware, and a Python-based inverse kinematics (IK) controller for high-level Cartesian control.
 
-<p align="center">
-  <img src="https://github.com/user-attachments/assets/94d61672-353b-4d17-881a-5043d9a84109" alt="Assembled Robotic Arm Shield" width="450" />
-</p>
+https://github.com/user-attachments/assets/bff3e96c-0358-43f1-9e7e-ef8ffabbe7ce
 
 ## ✨ Features
 
@@ -38,6 +36,10 @@ Robotic-Arm/
 ### 1. Hardware Setup
 
 1.  **Assemble the Shield:** The KiCad project files are in the `hardware/kicad_files` directory. Use them to manufacture and assemble the Arduino shield.
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/94d61672-353b-4d17-881a-5043d9a84109" alt="Assembled Robotic Arm Shield" width="350" />
+</p>
+
 2.  **Connect Components:**
     -   Mount the shield onto an Arduino Uno.
     -   Connect the four servo motors (Base, Shoulder, Elbow, Wrist) to the corresponding headers on the shield.
